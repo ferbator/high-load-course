@@ -40,7 +40,7 @@ class PaymentExternalServiceImpl(
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
 
-    private val _rateLimiter = CoroutineRateLimiter(rateLimitPerSec, TimeUnit)
+    private val _rateLimiter = CoroutineRateLimiter(rateLimitPerSec, TimeUnit.SECONDS)
     override val rateLimiter: CoroutineRateLimiter
         get() = _rateLimiter
 
