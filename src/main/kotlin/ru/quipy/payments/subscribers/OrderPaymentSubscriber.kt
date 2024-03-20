@@ -23,6 +23,7 @@ import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
+
 @Service
 class OrderPaymentSubscriber {
 
@@ -50,54 +51,30 @@ class OrderPaymentSubscriber {
             `when`(OrderPaymentStartedEvent::class) { event ->
                 paymentExecutor.submit {
                     val createdEvent = paymentESService.create {
-                        it.create(
-                            event.paymentId,
-                            event.orderId,
-                            event.amount
-                        )
+                        it.create(event.paymentId, event.orderId, event.amount)
                     }
                     logger.info("Payment ${createdEvent.paymentId} for order ${event.orderId} created.")
 
-                    while(true) {
-
-                        if (secondPaymentService.notOverTime(event.createdAt)){
-                            if (secondPaymentService.window.putIntoWindow()::class == NonBlockingOngoingWindow.WindowResponse.Success::class) {
-                                if (secondPaymentService.rateLimiter.tick()) {
-                                    secondPaymentService.submitPaymentRequest(createdEvent.paymentId, event.amount, event.createdAt)
-                                    break
-                                } else {
-                                    secondPaymentService.window.releaseWindow()
-                                }
-                            }
-                        }
-
-                        if (secondPaymentService.canWait(event.createdAt))
-                            continue
-
-                        if (firstPaymentService.notOverTime(event.createdAt)){
-                            if (firstPaymentService.window.putIntoWindow()::class == NonBlockingOngoingWindow.WindowResponse.Success::class) {
-                                if (firstPaymentService.rateLimiter.tick()) {
-                                    firstPaymentService.submitPaymentRequest(createdEvent.paymentId, event.amount, event.createdAt)
-                                } else {
-                                    firstPaymentService.window.releaseWindow()
-                                }
-                            }
-                        }
-
-                        if (firstPaymentService.canWait(event.createdAt))
-                            continue
-                        else {
-                            paymentESService.update(createdEvent.paymentId) {
-                                val transactionId = UUID.randomUUID()
-                                logger.warn("${createdEvent.paymentId} не смог оплатиться")
-                                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - event.createdAt))
-                                it.logProcessing(success = false, processedAt = now(), transactionId = transactionId)
-                            }
-                            break
-                        }
+                    if (!trySubmitPayment(secondPaymentService, createdEvent.paymentId, event.amount, event.createdAt)) {
+                        trySubmitPayment(firstPaymentService, createdEvent.paymentId, event.amount, event.createdAt)
                     }
                 }
             }
         }
+    }
+
+    private fun trySubmitPayment(paymentService: PaymentService, paymentId: UUID, amount: Int, paymentStartedAt: Long): Boolean {
+        if (paymentService.notOverTime(paymentStartedAt)) {
+            val windowResponse = paymentService.window.putIntoWindow()
+            if (windowResponse is NonBlockingOngoingWindow.WindowResponse.Success) {
+                if (paymentService.rateLimiter.tick()) {
+                    paymentService.submitPaymentRequest(paymentId, amount, paymentStartedAt)
+                    return true
+                } else {
+                    paymentService.window.releaseWindow()
+                }
+            }
+        }
+        return false
     }
 }
