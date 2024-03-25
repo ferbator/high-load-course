@@ -11,6 +11,7 @@ import ru.quipy.core.EventSourcingService
 import ru.quipy.orders.api.OrderAggregate
 import ru.quipy.orders.api.OrderPaymentStartedEvent
 import ru.quipy.payments.api.PaymentAggregate
+import ru.quipy.payments.api.PaymentCreatedEvent
 import ru.quipy.payments.config.ExternalServicesConfig
 import ru.quipy.payments.logic.*
 import ru.quipy.streams.AggregateSubscriptionsManager
@@ -55,26 +56,14 @@ class OrderPaymentSubscriber {
                     }
                     logger.info("Payment ${createdEvent.paymentId} for order ${event.orderId} created.")
 
-                    if (!trySubmitPayment(secondPaymentService, createdEvent.paymentId, event.amount, event.createdAt)) {
-                        trySubmitPayment(firstPaymentService, createdEvent.paymentId, event.amount, event.createdAt)
-                    }
+                    DefaultPaymentServiceSelector.selectPaymentService(
+                        event = event,
+                        createdEvent = createdEvent,
+                        secondPaymentService = secondPaymentService,
+                        firstPaymentService = firstPaymentService
+                    )
                 }
             }
         }
-    }
-
-    private fun trySubmitPayment(paymentService: PaymentService, paymentId: UUID, amount: Int, paymentStartedAt: Long): Boolean {
-        if (paymentService.notOverTime(paymentStartedAt)) {
-            val windowResponse = paymentService.window.putIntoWindow()
-            if (windowResponse is NonBlockingOngoingWindow.WindowResponse.Success) {
-                if (paymentService.rateLimiter.tick()) {
-                    paymentService.submitPaymentRequest(paymentId, amount, paymentStartedAt)
-                    return true
-                } else {
-                    paymentService.window.releaseWindow()
-                }
-            }
-        }
-        return false
     }
 }
