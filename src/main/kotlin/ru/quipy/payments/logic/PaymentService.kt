@@ -9,12 +9,14 @@ interface PaymentService {
 
     val rateLimiter: CoroutineRateLimiter
     val window: NonBlockingOngoingWindow
+    val getCost: Int
     /**
      * Submit payment request to external service.
      */
     fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long)
     fun canWait(paymentStartedAt: Long): Boolean
     fun notOverTime(paymentStartedAt: Long): Boolean
+    fun calculateSpeed(): Int
 }
 
 interface PaymentExternalService : PaymentService
@@ -27,6 +29,7 @@ data class ExternalServiceProperties(
     val accountName: String,
     val parallelRequests: Int,
     val rateLimitPerSec: Int,
+    val cost: Int,
     val request95thPercentileProcessingTime: Duration = Duration.ofSeconds(11)
 )
 

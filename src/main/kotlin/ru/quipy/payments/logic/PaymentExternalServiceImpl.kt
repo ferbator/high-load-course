@@ -36,6 +36,7 @@ class PaymentExternalServiceImpl(
 
     private val serviceName = properties.serviceName
     private val accountName = properties.accountName
+    private val cost = properties.cost
     private val requestAverageProcessingTime = properties.request95thPercentileProcessingTime
     private val rateLimitPerSec = properties.rateLimitPerSec
     private val parallelRequests = properties.parallelRequests
@@ -47,6 +48,9 @@ class PaymentExternalServiceImpl(
     private val _window = NonBlockingOngoingWindow(parallelRequests)
     override val window: NonBlockingOngoingWindow
         get() = _window
+
+    override val getCost: Int
+        get() = cost
 
     @Autowired
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
@@ -67,6 +71,10 @@ class PaymentExternalServiceImpl(
 
     override fun notOverTime(paymentStartedAt: Long): Boolean {
         return Duration.ofMillis(now() - paymentStartedAt) + requestAverageProcessingTime < paymentOperationTimeout
+    }
+
+    override fun calculateSpeed(): Int {
+        return minOf(rateLimitPerSec, parallelRequests / requestAverageProcessingTime.toMillis().toInt() ) // минимальное значение из R и P/A
     }
 
     override fun submitPaymentRequest(paymentId: UUID, amount: Int, paymentStartedAt: Long) {

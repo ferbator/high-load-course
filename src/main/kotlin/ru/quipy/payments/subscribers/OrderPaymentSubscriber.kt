@@ -37,6 +37,9 @@ class OrderPaymentSubscriber {
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 
     @Autowired
+    private lateinit var paymentServices: List<PaymentService>
+
+    @Autowired
     @Qualifier(ExternalServicesConfig.FIRST_PAYMENT_BEAN)
     private lateinit var firstPaymentService: PaymentService
 
@@ -44,10 +47,35 @@ class OrderPaymentSubscriber {
     @Qualifier(ExternalServicesConfig.SECOND_PAYMENT_BEAN)
     private lateinit var secondPaymentService: PaymentService
 
+    @Autowired
+    @Qualifier(ExternalServicesConfig.FIRST_PAYMENT_BEAN)
+    private lateinit var thirdPaymentService: PaymentService
+
+    @Autowired
+    @Qualifier(ExternalServicesConfig.SECOND_PAYMENT_BEAN)
+    private lateinit var fourthPaymentService: PaymentService
+
+    private fun getIndex(): Int {
+        return Random().nextInt(4)
+    }
+
+    private fun isReset() : Boolean {
+        val value = Random().nextDouble()
+        return value <= 0.2
+    }
+
+    private var nearestTimes = longArrayOf(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE)
+
+    private fun getNearest() : Int {
+        val minTime = nearestTimes.min()
+        return nearestTimes.indexOf(minTime)
+    }
+
     private val paymentExecutor = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-executor"))
 
     @PostConstruct
     fun init() {
+        paymentServices = paymentServices.sortedBy { it.getCost }
         subscriptionsManager.createSubscriber(OrderAggregate::class, "payments:order-subscriber", retryConf = RetryConf(1, RetryFailedStrategy.SKIP_EVENT)) {
             `when`(OrderPaymentStartedEvent::class) { event ->
                 paymentExecutor.submit {
@@ -55,12 +83,13 @@ class OrderPaymentSubscriber {
                         it.create(event.paymentId, event.orderId, event.amount)
                     }
                     logger.info("Payment ${createdEvent.paymentId} for order ${event.orderId} created.")
-
-                    DefaultPaymentServiceSelector.selectPaymentService(
+                    DefaultPaymentServiceSelector.processingPaymentOperation(
+                        paymentServices = paymentServices,
+                        isReset = isReset(),
+                        getNearest = getNearest(),
+                        nearestTimes = nearestTimes,
                         event = event,
-                        createdEvent = createdEvent,
-                        secondPaymentService = secondPaymentService,
-                        firstPaymentService = firstPaymentService
+                        createdEvent = createdEvent
                     )
                 }
             }
