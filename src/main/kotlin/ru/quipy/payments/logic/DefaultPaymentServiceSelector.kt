@@ -8,6 +8,8 @@ import ru.quipy.orders.api.OrderPaymentStartedEvent
 import ru.quipy.payments.api.PaymentCreatedEvent
 import ru.quipy.payments.subscribers.OrderPaymentSubscriber
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicLongArray
 
 @Service
 abstract class DefaultPaymentServiceSelector {
@@ -18,7 +20,7 @@ abstract class DefaultPaymentServiceSelector {
             paymentServices: List<PaymentService>,
             isReset : Boolean,
             getNearest : Int,
-            nearestTimes: LongArray,
+            nearestTimes: AtomicLongArray,
             event: OrderPaymentStartedEvent,
             createdEvent: PaymentCreatedEvent,
             ){
@@ -27,13 +29,16 @@ abstract class DefaultPaymentServiceSelector {
                     val index = getNearest
                     if (paymentServices[index].window.putIntoWindow()::class == NonBlockingOngoingWindow.WindowResponse.Success::class) {
                         if (paymentServices[index].rateLimiter.tick()) {
-                            nearestTimes[index] =
-                                (System.currentTimeMillis() + (1.0 / paymentServices[index].calculateSpeed())).toLong()
-                            paymentServices[index].submitPaymentRequest(
-                                createdEvent.paymentId,
-                                event.amount,
-                                event.createdAt
-                            )
+                            try {
+                                nearestTimes[index] = (System.currentTimeMillis() + (1.0 / paymentServices[index].calculateSpeed())).toLong()
+                                paymentServices[index].submitPaymentRequest(
+                                    createdEvent.paymentId,
+                                    event.amount,
+                                    event.createdAt
+                                )
+                            } finally {
+                                paymentServices[index].window.releaseWindow()
+                            }
                             break
                         } else {
                             paymentServices[index].window.releaseWindow()
@@ -43,13 +48,16 @@ abstract class DefaultPaymentServiceSelector {
                     for (index in paymentServices.indices) {
                         if (paymentServices[index].window.putIntoWindow()::class == NonBlockingOngoingWindow.WindowResponse.Success::class) {
                             if (paymentServices[index].rateLimiter.tick()) {
-                                nearestTimes[index] =
-                                    (System.currentTimeMillis() + (1.0 / paymentServices[index].calculateSpeed())).toLong()
-                                paymentServices[index].submitPaymentRequest(
-                                    createdEvent.paymentId,
-                                    event.amount,
-                                    event.createdAt
-                                )
+                                try {
+                                    nearestTimes[index] = (System.currentTimeMillis() + (1.0 / paymentServices[index].calculateSpeed())).toLong()
+                                    paymentServices[index].submitPaymentRequest(
+                                        createdEvent.paymentId,
+                                        event.amount,
+                                        event.createdAt
+                                    )
+                                } finally {
+                                    paymentServices[index].window.releaseWindow()
+                                }
                                 break@outerCycle
                             } else {
                                 paymentServices[index].window.releaseWindow()

@@ -6,12 +6,10 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.NamedThreadFactory
-import ru.quipy.common.utils.NonBlockingOngoingWindow
 import ru.quipy.core.EventSourcingService
 import ru.quipy.orders.api.OrderAggregate
 import ru.quipy.orders.api.OrderPaymentStartedEvent
 import ru.quipy.payments.api.PaymentAggregate
-import ru.quipy.payments.api.PaymentCreatedEvent
 import ru.quipy.payments.config.ExternalServicesConfig
 import ru.quipy.payments.logic.*
 import ru.quipy.streams.AggregateSubscriptionsManager
@@ -23,6 +21,7 @@ import javax.annotation.PostConstruct
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLongArray
 
 
 @Service
@@ -64,11 +63,19 @@ class OrderPaymentSubscriber {
         return value <= 0.2
     }
 
-    private var nearestTimes = longArrayOf(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE)
+    private var nearestTimes = AtomicLongArray(4)
 
     private fun getNearest() : Int {
-        val minTime = nearestTimes.min()
-        return nearestTimes.indexOf(minTime)
+        var minTime = Long.MAX_VALUE
+        var index = 0
+        for (i in 0 until nearestTimes.length()) {
+            val time = nearestTimes.get(i)
+            if (time < minTime) {
+                minTime = time
+                index = i
+            }
+        }
+        return index
     }
 
     private val paymentExecutor = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-executor"))
