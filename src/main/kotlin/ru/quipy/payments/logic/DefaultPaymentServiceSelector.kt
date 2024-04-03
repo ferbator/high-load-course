@@ -4,9 +4,12 @@ import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.NonBlockingOngoingWindow
+import ru.quipy.core.EventSourcingService
 import ru.quipy.orders.api.OrderPaymentStartedEvent
+import ru.quipy.payments.api.PaymentAggregate
 import ru.quipy.payments.api.PaymentCreatedEvent
 import ru.quipy.payments.subscribers.OrderPaymentSubscriber
+import java.time.Duration
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicLongArray
@@ -18,20 +21,23 @@ abstract class DefaultPaymentServiceSelector {
 
         fun processingPaymentOperation(
             paymentServices: List<PaymentService>,
-            isReset : Boolean,
-            getNearest : Int,
+            isReset: Boolean,
+            getNearest: Int,
             nearestTimes: AtomicLongArray,
             event: OrderPaymentStartedEvent,
             createdEvent: PaymentCreatedEvent,
-            ){
-            outerCycle@ while(true) {
-                if (!isReset) {
-                    val index = getNearest
+            paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
+        ) {
+            outerCycle@ while (true) {
+                for (index in paymentServices.indices) {
+                    if (paymentServices[index].getQueries.remainingCapacity() == 0)
+                        continue
                     if (paymentServices[index].window.putIntoWindow()::class == NonBlockingOngoingWindow.WindowResponse.Success::class) {
                         if (paymentServices[index].rateLimiter.tick()) {
                             try {
-                                nearestTimes[index] = (System.currentTimeMillis() + (1.0 / paymentServices[index].calculateSpeed())).toLong()
-                                paymentServices[index].submitPaymentRequest(
+                                nearestTimes[index] =
+                                    (System.currentTimeMillis() + (1.0 / paymentServices[index].calculateSpeed())).toLong()
+                                paymentServices[index].enqueuePayment(
                                     createdEvent.paymentId,
                                     event.amount,
                                     event.createdAt
@@ -39,31 +45,24 @@ abstract class DefaultPaymentServiceSelector {
                             } finally {
                                 paymentServices[index].window.releaseWindow()
                             }
-                            break
+                            break@outerCycle
                         } else {
                             paymentServices[index].window.releaseWindow()
                         }
                     }
-                } else
-                    for (index in paymentServices.indices) {
-                        if (paymentServices[index].window.putIntoWindow()::class == NonBlockingOngoingWindow.WindowResponse.Success::class) {
-                            if (paymentServices[index].rateLimiter.tick()) {
-                                try {
-                                    nearestTimes[index] = (System.currentTimeMillis() + (1.0 / paymentServices[index].calculateSpeed())).toLong()
-                                    paymentServices[index].submitPaymentRequest(
-                                        createdEvent.paymentId,
-                                        event.amount,
-                                        event.createdAt
-                                    )
-                                } finally {
-                                    paymentServices[index].window.releaseWindow()
-                                }
-                                break@outerCycle
-                            } else {
-                                paymentServices[index].window.releaseWindow()
-                            }
-                        }
-                    }
+                }
+                paymentESService.update(createdEvent.paymentId) {
+                    val transactionId = UUID.randomUUID()
+                    logger.warn("${createdEvent.paymentId} failed")
+                    it.logSubmission(
+                        success = true,
+                        transactionId,
+                        now(),
+                        Duration.ofMillis(now() - event.createdAt)
+                    )
+                    it.logProcessing(success = false, processedAt = now(), transactionId = transactionId)
+                }
+                break
             }
 
         }
