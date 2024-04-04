@@ -28,43 +28,42 @@ abstract class DefaultPaymentServiceSelector {
             createdEvent: PaymentCreatedEvent,
             paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
         ) {
-            outerCycle@ while (true) {
-                for (index in paymentServices.indices) {
-                    if (paymentServices[index].getQueries.remainingCapacity() == 0)
-                        continue
-                    if (paymentServices[index].window.putIntoWindow()::class == NonBlockingOngoingWindow.WindowResponse.Success::class) {
-                        if (paymentServices[index].rateLimiter.tick()) {
-                            try {
-                                nearestTimes[index] =
-                                    (System.currentTimeMillis() + (1.0 / paymentServices[index].calculateSpeed())).toLong()
-                                paymentServices[index].enqueuePayment(
-                                    createdEvent.paymentId,
-                                    event.amount,
-                                    event.createdAt
-                                )
-                            } finally {
-                                paymentServices[index].window.releaseWindow()
-                            }
-                            break@outerCycle
-                        } else {
+            var paymentProcessed = false
+
+            for (index in paymentServices.indices) {
+                if (paymentServices[index].getQueries.remainingCapacity() == 0) {
+                    continue
+                }
+                if (paymentServices[index].window.putIntoWindow()::class == NonBlockingOngoingWindow.WindowResponse.Success::class) {
+                    if (paymentServices[index].rateLimiter.tick()) {
+                        try {
+                            nearestTimes[index] =
+                                (System.currentTimeMillis() + (1.0 / paymentServices[index].calculateSpeed())).toLong()
+                            paymentServices[index].enqueuePayment(
+                                createdEvent.paymentId, event.amount, event.createdAt
+                            )
+                            paymentProcessed = true
+                            break
+                        } finally {
                             paymentServices[index].window.releaseWindow()
                         }
+                    } else {
+                        paymentServices[index].window.releaseWindow()
                     }
                 }
+            }
+
+            if (!paymentProcessed) {
                 paymentESService.update(createdEvent.paymentId) {
                     val transactionId = UUID.randomUUID()
                     logger.warn("${createdEvent.paymentId} failed")
                     it.logSubmission(
-                        success = true,
-                        transactionId,
-                        now(),
-                        Duration.ofMillis(now() - event.createdAt)
+                        success = true, transactionId, now(), Duration.ofMillis(now() - event.createdAt)
                     )
                     it.logProcessing(success = false, processedAt = now(), transactionId = transactionId)
                 }
-                break
             }
-
         }
+
     }
 }

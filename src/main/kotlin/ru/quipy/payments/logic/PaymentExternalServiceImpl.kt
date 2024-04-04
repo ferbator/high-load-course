@@ -134,7 +134,6 @@ class PaymentExternalServiceImpl(
                             }
                         }
                     }
-                    window.releaseWindow()
                 }
 
                 override fun onResponse(call: Call, response: Response) {
@@ -152,7 +151,6 @@ class PaymentExternalServiceImpl(
                             it.logProcessing(body.result, now(), transactionId, reason = body.message)
                         }
                     }
-                    window.releaseWindow()
                 }
             })
         }
