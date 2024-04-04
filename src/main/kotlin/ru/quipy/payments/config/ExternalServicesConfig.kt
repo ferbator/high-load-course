@@ -10,7 +10,7 @@ import java.time.Duration
 @Configuration
 class ExternalServicesConfig {
     companion object {
-//        const val PRIMARY_PAYMENT_BEAN = "PRIMARY_PAYMENT_BEAN"
+        const val PRIMARY_PAYMENT_BEAN = "PRIMARY_PAYMENT_BEAN"
         const val FIRST_PAYMENT_BEAN = "FIRST_PAYMENT_BEAN"
         const val SECOND_PAYMENT_BEAN = "SECOND_PAYMENT_BEAN"
         const val THIRD_PAYMENT_BEAN = "THIRD_PAYMENT_BEAN"
@@ -60,16 +60,19 @@ class ExternalServicesConfig {
         )
     }
 
-//    @Bean(PRIMARY_PAYMENT_BEAN)
-//    fun fastExternalService() =
-//        PaymentExternalServiceImpl(
-//            accountProps_4,
-//        )
+
+    @Bean(PRIMARY_PAYMENT_BEAN)
+    fun fastExternalService() =
+        PaymentExternalServiceImpl(
+            accountProps_4,
+        )
+
     @Bean(FIRST_PAYMENT_BEAN)
     fun accountOneExternalService() =
         PaymentExternalServiceImpl(
             accountProps_1,
         )
+
     @Bean(SECOND_PAYMENT_BEAN)
     fun accountTwoExternalService() =
         PaymentExternalServiceImpl(
@@ -80,10 +83,11 @@ class ExternalServicesConfig {
     fun account3ExternalService() =
         PaymentExternalServiceImpl(
             accountProps_3,
-            )
+        )
+
     @Bean(FOURTH_PAYMENT_BEAN)
     fun account4ExternalService() =
         PaymentExternalServiceImpl(
             accountProps_4,
-            )
+        )
 }
