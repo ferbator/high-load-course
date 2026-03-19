@@ -6,7 +6,6 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.NamedThreadFactory
-import ru.quipy.common.utils.NonBlockingOngoingWindow
 import ru.quipy.core.EventSourcingService
 import ru.quipy.orders.api.OrderAggregate
 import ru.quipy.orders.api.OrderPaymentStartedEvent
@@ -22,6 +21,8 @@ import javax.annotation.PostConstruct
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLongArray
+
 
 @Service
 class OrderPaymentSubscriber {
@@ -35,6 +36,9 @@ class OrderPaymentSubscriber {
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 
     @Autowired
+    private lateinit var paymentServices: List<PaymentService>
+
+    @Autowired
     @Qualifier(ExternalServicesConfig.FIRST_PAYMENT_BEAN)
     private lateinit var firstPaymentService: PaymentService
 
@@ -42,60 +46,58 @@ class OrderPaymentSubscriber {
     @Qualifier(ExternalServicesConfig.SECOND_PAYMENT_BEAN)
     private lateinit var secondPaymentService: PaymentService
 
+    @Autowired
+    @Qualifier(ExternalServicesConfig.FIRST_PAYMENT_BEAN)
+    private lateinit var thirdPaymentService: PaymentService
+
+    @Autowired
+    @Qualifier(ExternalServicesConfig.SECOND_PAYMENT_BEAN)
+    private lateinit var fourthPaymentService: PaymentService
+
+    private fun getIndex(): Int {
+        return Random().nextInt(4)
+    }
+
+    private fun isReset() : Boolean {
+        val value = Random().nextDouble()
+        return value <= 0.2
+    }
+
+    private var nearestTimes = AtomicLongArray(4)
+
+    private fun getNearest() : Int {
+        var minTime = Long.MAX_VALUE
+        var index = 0
+        for (i in 0 until nearestTimes.length()) {
+            val time = nearestTimes.get(i)
+            if (time < minTime) {
+                minTime = time
+                index = i
+            }
+        }
+        return index
+    }
+
     private val paymentExecutor = Executors.newFixedThreadPool(16, NamedThreadFactory("payment-executor"))
 
     @PostConstruct
     fun init() {
+        paymentServices = paymentServices.sortedBy { it.getCost }
         subscriptionsManager.createSubscriber(OrderAggregate::class, "payments:order-subscriber", retryConf = RetryConf(1, RetryFailedStrategy.SKIP_EVENT)) {
             `when`(OrderPaymentStartedEvent::class) { event ->
                 paymentExecutor.submit {
                     val createdEvent = paymentESService.create {
-                        it.create(
-                            event.paymentId,
-                            event.orderId,
-                            event.amount
-                        )
+                        it.create(event.paymentId, event.orderId, event.amount)
                     }
                     logger.info("Payment ${createdEvent.paymentId} for order ${event.orderId} created.")
-
-                    while(true) {
-
-                        if (secondPaymentService.notOverTime(event.createdAt)){
-                            if (secondPaymentService.window.putIntoWindow()::class == NonBlockingOngoingWindow.WindowResponse.Success::class) {
-                                if (secondPaymentService.rateLimiter.tick()) {
-                                    secondPaymentService.submitPaymentRequest(createdEvent.paymentId, event.amount, event.createdAt)
-                                    break
-                                } else {
-                                    secondPaymentService.window.releaseWindow()
-                                }
-                            }
-                        }
-
-                        if (secondPaymentService.canWait(event.createdAt))
-                            continue
-
-                        if (firstPaymentService.notOverTime(event.createdAt)){
-                            if (firstPaymentService.window.putIntoWindow()::class == NonBlockingOngoingWindow.WindowResponse.Success::class) {
-                                if (firstPaymentService.rateLimiter.tick()) {
-                                    firstPaymentService.submitPaymentRequest(createdEvent.paymentId, event.amount, event.createdAt)
-                                } else {
-                                    firstPaymentService.window.releaseWindow()
-                                }
-                            }
-                        }
-
-                        if (firstPaymentService.canWait(event.createdAt))
-                            continue
-                        else {
-                            paymentESService.update(createdEvent.paymentId) {
-                                val transactionId = UUID.randomUUID()
-                                logger.warn("${createdEvent.paymentId} не смог оплатиться")
-                                it.logSubmission(success = true, transactionId, now(), Duration.ofMillis(now() - event.createdAt))
-                                it.logProcessing(success = false, processedAt = now(), transactionId = transactionId)
-                            }
-                            break
-                        }
-                    }
+                    DefaultPaymentServiceSelector.processingPaymentOperation(
+                        paymentServices = paymentServices,
+                        isReset = isReset(),
+                        getNearest = getNearest(),
+                        nearestTimes = nearestTimes,
+                        event = event,
+                        createdEvent = createdEvent
+                    )
                 }
             }
         }
