@@ -1,11 +1,15 @@
 package ru.quipy.payments.subscribers
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import org.slf4j.Logger
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.beans.factory.annotation.Qualifier
 import org.springframework.stereotype.Service
 import ru.quipy.common.utils.NamedThreadFactory
+import ru.quipy.common.utils.NonBlockingOngoingWindow
 import ru.quipy.core.EventSourcingService
 import ru.quipy.orders.api.OrderAggregate
 import ru.quipy.orders.api.OrderPaymentStartedEvent
@@ -36,9 +40,6 @@ class OrderPaymentSubscriber {
     private lateinit var paymentESService: EventSourcingService<UUID, PaymentAggregate, PaymentAggregateState>
 
     @Autowired
-    private lateinit var paymentServices: List<PaymentService>
-
-    @Autowired
     @Qualifier(ExternalServicesConfig.FIRST_PAYMENT_BEAN)
     private lateinit var firstPaymentService: PaymentService
 
@@ -54,18 +55,24 @@ class OrderPaymentSubscriber {
     @Qualifier(ExternalServicesConfig.SECOND_PAYMENT_BEAN)
     private lateinit var fourthPaymentService: PaymentService
 
+
     private fun getIndex(): Int {
         return Random().nextInt(4)
     }
 
-    private fun isReset() : Boolean {
+    private fun isReset(): Boolean {
         val value = Random().nextDouble()
         return value <= 0.2
     }
 
+    @Autowired
+    private lateinit var paymentServices: List<PaymentService>
+
     private var nearestTimes = AtomicLongArray(4)
 
-    private fun getNearest() : Int {
+
+    // TODO: CAS, get and set?
+    private fun getNearest(): Int {
         var minTime = Long.MAX_VALUE
         var index = 0
         for (i in 0 until nearestTimes.length()) {
@@ -83,7 +90,12 @@ class OrderPaymentSubscriber {
     @PostConstruct
     fun init() {
         paymentServices = paymentServices.sortedBy { it.getCost }
-        subscriptionsManager.createSubscriber(OrderAggregate::class, "payments:order-subscriber", retryConf = RetryConf(1, RetryFailedStrategy.SKIP_EVENT)) {
+
+        subscriptionsManager.createSubscriber(
+            OrderAggregate::class,
+            "payments:order-subscriber",
+            retryConf = RetryConf(1, RetryFailedStrategy.SKIP_EVENT)
+        ) {
             `when`(OrderPaymentStartedEvent::class) { event ->
                 paymentExecutor.submit {
                     val createdEvent = paymentESService.create {
@@ -96,7 +108,8 @@ class OrderPaymentSubscriber {
                         getNearest = getNearest(),
                         nearestTimes = nearestTimes,
                         event = event,
-                        createdEvent = createdEvent
+                        createdEvent = createdEvent,
+                        paymentESService = paymentESService,
                     )
                 }
             }
