@@ -60,6 +60,7 @@ class ExternalServicesConfig {
         )
     }
 
+
 //    @Bean(PRIMARY_PAYMENT_BEAN)
 //    fun fastExternalService() =
 //        PaymentExternalServiceImpl(
@@ -73,7 +74,7 @@ class ExternalServicesConfig {
     @Bean(SECOND_PAYMENT_BEAN)
     fun accountTwoExternalService() =
         PaymentExternalServiceImpl(
-            accountProps_2,
+            accountProps_2
         )
 
     @Bean(THIRD_PAYMENT_BEAN)
